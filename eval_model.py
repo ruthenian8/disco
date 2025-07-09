@@ -142,9 +142,6 @@ def write_model_logs_to_json(MODEL_LOG_DIR, results_dict, output_name):
         json.dump(results_dict, fp, sort_keys=True, indent=4,default=str)
 
 def write_results_to_wandb(wandb_name,results,model_type,dataset):
-
-    import pdb
-    pdb.set_trace()
     
     wandb.init(project=wandb_name, entity=wandb_entity,name=dataset)
 

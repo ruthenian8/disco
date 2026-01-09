@@ -99,6 +99,11 @@ def calc_stats(model, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="mode",
     agg_acc = 0.0  # aggregated accuracy
     Ns = 0.0
     device = model.device
+    
+    # Collect all predictions and ground truth labels
+    all_y_pred = []
+    all_y_test = []
+    
     while ptr_s < len(ptrs):
         if ptr_e > len(ptrs):
             ptr_e = len(ptrs)
@@ -131,6 +136,10 @@ def calc_stats(model, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="mode",
         y_pred = torch.argmax(pY, dim=1).to(torch.int64)
         comp = (y_pred == y_ind).to(torch.float32)
         acc += torch.sum(comp).item()
+        
+        # Collect predictions and ground truth for metrics calculation
+        all_y_pred.append(y_pred)
+        all_y_test.append(y_ind)
 
         # compute aggregated accuracy across internally known annotators
         sub_acc = 0.0
@@ -150,8 +159,8 @@ def calc_stats(model, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="mode",
                     sub_acc += comp
                 else:  # == "expectation"
                     y_mean = torch.mean(py, dim=0, keepdim=True)
-                    y_pred = torch.argmax(y_mean, dim=1).to(torch.int64)
-                    comp = 1.0 if y_pred.item() == ys_ind.item() else 0.0
+                    y_pred_agg = torch.argmax(y_mean, dim=1).to(torch.int64)
+                    comp = 1.0 if y_pred_agg.item() == ys_ind.item() else 0.0
                     sub_acc += comp
 
         agg_acc += sub_acc
@@ -164,10 +173,9 @@ def calc_stats(model, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="mode",
     agg_acc = agg_acc / (Y.shape[0] * 1.0)
     model.drop_p = drop_p  # turn dropout back on
 
-    # classification report using y_pred and y_ind
-    # y_pred = convert_to_majority_index(y_pred)
-    # y_test = convert_to_majority_index(y_ind)
-    y_test = y_ind
+    # classification report using collected predictions and ground truth
+    y_test = torch.cat(all_y_test, dim=0)
+    y_pred = torch.cat(all_y_pred, dim=0)
     f1_macro = f1_score(y_test.cpu().numpy(), y_pred.cpu().numpy(), average='macro')
 
     f1_micro = f1_score(y_test.cpu().numpy(), y_pred.cpu().numpy(), average='micro')
@@ -236,7 +244,6 @@ def train_disco(data, simulation_params, disco_model_params, params):
             ptr_s += len(ptr_indx)
             ptr_e += len(ptr_indx)
             # sample without replacement the label distribution data
-            i_s = data["I"][ptr_indx, :]
             a_s = data["A"][ptr_indx, :]
             y_s = torch.tensor(data["Y"][ptr_indx, :], dtype=torch.float32, device=device)
             xi_s = torch.tensor(data["Xi"][ptr_indx, :], dtype=torch.float32, device=device)

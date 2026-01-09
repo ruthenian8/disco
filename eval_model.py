@@ -211,6 +211,15 @@ def main():
     print("Ya.shape = ",Ya.shape)
     print("I.shape = ",I.shape)
     print("A.shape = ",A.shape)
+    
+    ################################################################################
+    # set up label distributional learning model (load once outside the loop)
+    ################################################################################
+    model = load_object(model_fname)
+    model.drop_p = 0.0
+    device = torch.device(gpu_tag if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    
     empirical_labels = []
     predicitions = []
     data_to_write = []
@@ -220,13 +229,6 @@ def main():
         message = items['message'].values[0]
         empirical_label = Yi[item_index]
         empirical_labels.append(empirical_label)
-        ################################################################################
-        # set up label distributional learning model
-        ################################################################################
-        model = load_object(model_fname)
-        model.drop_p = 0.0
-        device = torch.device(gpu_tag if torch.cuda.is_available() else "cpu")
-        model.to(device)
         # check model's accuracy on the dataset it was fit on
         # y_ind = tf.cast(tf.argmax(tf.cast(Y,dtype=tf.float32),1),dtype=tf.int32)
         # acc, L, _, _ = calc_stats(model, Xi, Yi, Ya, Y, A, I, batch_size)

@@ -210,15 +210,15 @@ def train_disco(data, simulation_params, disco_model_params, params):
         print(
             " {0}: Fit.Acc = {1}  E.Acc = {2} L = {3}  KLi = {4}  KLa = {5}".format(-1, acc, agg_acc, L, KLi, KLa))
     simulation_params["n_epoch"] = 5
+    train_dataset = data.get("train_dataset") or DiscoDataset(
+        data["Xi"],
+        data["Yi"],
+        data["Ya"],
+        data["Y"],
+        data["A"],
+    )
+    train_loader = DataLoader(train_dataset, batch_size=simulation_params["batch_size"], shuffle=True)
     for e in range(simulation_params["n_epoch"]):
-        train_dataset = data.get("train_dataset") or DiscoDataset(
-            data["Xi"],
-            data["Yi"],
-            data["Ya"],
-            data["Y"],
-            data["A"],
-        )
-        train_loader = DataLoader(train_dataset, batch_size=simulation_params["batch_size"], shuffle=True)
         L = 0.0  # epoch loss
         Ns = 0.0
         for batch in train_loader:

@@ -1,10 +1,7 @@
-import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# sys.path.insert(0, '../utils/')
-sys.path.append('../utils')
 from utils.utils import softmax, init_weights, calc_catNLL, D_KL, drop_out, l1_l2_norm_calculation
 
 class DISCO(nn.Module):

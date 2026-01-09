@@ -6,7 +6,7 @@ Utilities function file
 import torch
 import numpy as np
 import pickle
-from utils.config import Config
+from .config import Config
 seed = 69
 torch.manual_seed(seed)
 if torch.cuda.is_available():

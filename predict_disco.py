@@ -1,10 +1,7 @@
 import os
-import tensorflow as tf
 from train_disco_sweep import train_disco
 from utils.utils import get_params,read_data
 import argparse
-
-import pdb
 
 """
     Trains a prototype label distributional learning neural model (LDL-NM) which
@@ -23,7 +20,7 @@ from wandb_creds import wandb_creds
 os.environ["WANDB_API_KEY"] = wandb_creds()
 
 
-def read_wandb_sweep_id(sweep_id,params, simulation_params, gpu_tag):
+def read_wandb_sweep_id(sweep_id, params, simulation_params):
     data = read_data(params)
     
     # obtain the best runs from the sweep
@@ -34,8 +31,7 @@ def read_wandb_sweep_id(sweep_id,params, simulation_params, gpu_tag):
     best_run = sweep.best_run()
     best_parameters = best_run.config
     wandb.init(config=best_parameters)
-    with tf.device(gpu_tag):
-        train_disco(data, simulation_params, best_parameters, params)
+    train_disco(data, simulation_params, best_parameters, params)
 
 
 def main():
@@ -54,14 +50,12 @@ def main():
     if gpu_id>-1:
         print(" > Using GPU ID {0}".format(gpu_id))
         os.environ["CUDA_VISIBLE_DEVICES"] = "{0}".format(gpu_id)
-        gpu_tag = '/GPU:0'
     else:
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-        gpu_tag = '/CPU:0'
 
     params, simulation_params,_ = get_params(cfg_fname)
 
-    read_wandb_sweep_id(sweep_id,params, simulation_params, gpu_tag)
+    read_wandb_sweep_id(sweep_id, params, simulation_params)
 
 
 if __name__ == '__main__':

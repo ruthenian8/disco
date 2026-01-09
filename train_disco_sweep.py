@@ -1,18 +1,13 @@
 import os
-import sys, getopt, optparse
-import pickle
-import tensorflow as tf
+import torch
 import numpy as np
 
 # sys.path.insert(0, 'utils/')
 # sys.path.insert(0, 'model/')
 from model.disco import DISCO
-from utils.config import Config
-from utils.utils import save_object, calc_mode, D_KL,get_config_file,get_params,read_data
-from sklearn.metrics import accuracy_score,classification_report,f1_score
+from utils.utils import save_object, calc_mode, D_KL, get_params, read_data
+from sklearn.metrics import classification_report, f1_score
 import argparse
-import pdb
-import random
 import wandb
 from wandb_creds import wandb_creds 
 os.environ["WANDB_API_KEY"] = wandb_creds()
@@ -103,6 +98,7 @@ def calc_stats(model, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="mode",
     acc = 0.0
     agg_acc = 0.0  # aggregated accuracy
     Ns = 0.0
+    device = model.device
     while ptr_s < len(ptrs):
         if ptr_e > len(ptrs):
             ptr_e = len(ptrs)
@@ -110,13 +106,12 @@ def calc_stats(model, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="mode",
         ptr_s += len(ptr_indx)
         ptr_e += len(ptr_indx)
         # sample without replacement the label distribution data
-        i_s = I[ptr_indx, :]
         a_s = A[ptr_indx, :]
-        xi_s = tf.cast(Xi[ptr_indx, :], dtype=tf.float32)
-        y_s = tf.cast(Y[ptr_indx, :], dtype=tf.float32)
-        y_ind = tf.cast(tf.argmax(tf.cast(y_s, dtype=tf.float32), 1), dtype=tf.int32)
-        yi_s = tf.cast(Yi[ptr_indx, :], dtype=tf.float32)
-        ya_s = tf.cast(Ya[ptr_indx, :], dtype=tf.float32)
+        xi_s = torch.tensor(Xi[ptr_indx, :], dtype=torch.float32, device=device)
+        y_s = torch.tensor(Y[ptr_indx, :], dtype=torch.float32, device=device)
+        y_ind = torch.argmax(y_s, dim=1).to(torch.int64)
+        yi_s = torch.tensor(Yi[ptr_indx, :], dtype=torch.float32, device=device)
+        ya_s = torch.tensor(Ya[ptr_indx, :], dtype=torch.float32, device=device)
 
         z = model.encode(xi_s, a_s)
         pY, _ = model.decode_y(z)
@@ -127,37 +122,37 @@ def calc_stats(model, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="mode",
         Ns = y_s.shape[0]
         L_t, Ly_t, KLi_t, KLa_t = model.calc_loss(y_s, yi_s, ya_s, pY, pYi,
                                                   pYa)  # compute cost (loss over entire design matrices)
-        L += L_t * Ns
-        KLi += KLi_t * Ns
-        KLa += KLa_t * Ns
+        L += L_t.item() * Ns
+        KLi += KLi_t.item() * Ns
+        KLa += KLa_t.item() * Ns
 
   
         # compute accuracy of predictions
-        y_pred = tf.cast(tf.argmax(pY, 1), dtype=tf.int32)
-        comp = tf.cast(tf.equal(y_pred, y_ind), dtype=tf.float32)
-        acc += tf.reduce_sum(comp)
+        y_pred = torch.argmax(pY, dim=1).to(torch.int64)
+        comp = (y_pred == y_ind).to(torch.float32)
+        acc += torch.sum(comp).item()
 
         # compute aggregated accuracy across internally known annotators
         sub_acc = 0.0
 
         if eval_aggreg is True:
             for s in range(xi_s.shape[0]):
-                xs = tf.expand_dims(xi_s[s, :], axis=0)
-                ys = tf.expand_dims(y_s[s, :], axis=0)
-                ys_ind = tf.cast(tf.argmax(tf.cast(ys, dtype=tf.float32), 1), dtype=tf.int32)
+                xs = xi_s[s, :].unsqueeze(0)
+                ys = y_s[s, :].unsqueeze(0)
+                ys_ind = torch.argmax(ys, dim=1).to(torch.int64)
                 py, _ = model.decode_y_ensemble(xs)
-                y_label_preds = tf.reduce_mean(py, axis=0, keepdims=True)
-                agg_KL +=  D_KL(ys,y_label_preds) #* Ns
+                y_label_preds = torch.mean(py, dim=0, keepdim=True)
+                agg_KL += D_KL(ys, y_label_preds).item() #* Ns
                 if agg_type == "mode":
-                    yhat_set = tf.argmax(py, axis=1).numpy().tolist()
+                    yhat_set = torch.argmax(py, dim=1).cpu().tolist()
                     y_mode, y_freq = calc_mode(yhat_set)  # compute mode of predictions
-                    comp = tf.cast(tf.equal(y_mode, ys_ind), dtype=tf.float32)
-                    sub_acc += tf.reduce_sum(comp)
+                    comp = 1.0 if y_mode == ys_ind.item() else 0.0
+                    sub_acc += comp
                 else:  # == "expectation"
-                    y_mean = tf.reduce_mean(py, axis=0, keepdims=True)
-                    y_pred = tf.cast(tf.argmax(y_mean, 1), dtype=tf.int32)
-                    comp = tf.cast(tf.equal(y_pred, ys_ind), dtype=tf.float32)
-                    sub_acc += tf.reduce_sum(comp)
+                    y_mean = torch.mean(py, dim=0, keepdim=True)
+                    y_pred = torch.argmax(y_mean, dim=1).to(torch.int64)
+                    comp = 1.0 if y_pred.item() == ys_ind.item() else 0.0
+                    sub_acc += comp
 
         agg_acc += sub_acc
 
@@ -173,13 +168,13 @@ def calc_stats(model, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="mode",
     # y_pred = convert_to_majority_index(y_pred)
     # y_test = convert_to_majority_index(y_ind)
     y_test = y_ind
-    f1_macro = f1_score(y_test, y_pred, average='macro')
+    f1_macro = f1_score(y_test.cpu().numpy(), y_pred.cpu().numpy(), average='macro')
 
-    f1_micro = f1_score(y_test, y_pred, average='micro')
+    f1_micro = f1_score(y_test.cpu().numpy(), y_pred.cpu().numpy(), average='micro')
 
-    f1_weighted = f1_score(y_test, y_pred, average='weighted')
+    f1_weighted = f1_score(y_test.cpu().numpy(), y_pred.cpu().numpy(), average='weighted')
 
-    results = classification_report(y_test, y_pred, digits=3, output_dict=True)
+    results = classification_report(y_test.cpu().numpy(), y_pred.cpu().numpy(), digits=3, output_dict=True)
     precision_macro = results['macro avg']['precision']
     precision_weighted = results['weighted avg']['precision']
 
@@ -191,6 +186,7 @@ def calc_stats(model, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="mode",
 
 
 def train_disco(data, simulation_params, disco_model_params, params):
+    device = torch.device("cuda" if torch.cuda.is_available() and torch.cuda.device_count() > 0 else "cpu")
     model = DISCO(xi_dim=data["n_xi"], yi_dim=data["yi_dim"], ya_dim=data["ya_dim"], y_dim=data["y_dim"],
                   a_dim=data["n_a"],
                   lat_dim=disco_model_params["lat_dim"], act_fx=disco_model_params["act_fx"],
@@ -198,7 +194,7 @@ def train_disco(data, simulation_params, disco_model_params, params):
                   lat_i_dim=disco_model_params["lat_i_dim"], lat_a_dim=disco_model_params["lat_a_dim"],
                   lat_fusion_type=disco_model_params["lat_fusion_type"],
                   drop_p=disco_model_params["drop_p"], gamma_i=disco_model_params["gamma_i"],
-                  gamma_a=disco_model_params["gamma_a"])
+                  gamma_a=disco_model_params["gamma_a"], device=device)
     model.set_opt(disco_model_params["opt_type"], disco_model_params["learning_rate"])
 
     # Z = model.encode(Xi, A)
@@ -209,7 +205,7 @@ def train_disco(data, simulation_params, disco_model_params, params):
     ################################################################################
 
     # wandb_initialize(disco_model_params,simulation_params["n_epoch"])
-    acc, L, KLi, KLa, agg_acc, f1_macro, f1_micro, f1_weighted, precision_macro, precision_weighted, recall_macro, recall_weighted,train_agg_KL = calc_stats(model, data["Xi"], data["Yi"], data["Ya"], data["Y"], data["A"], data["I"],
+    acc, L, KLi, KLa, agg_acc, f1_macro, f1_micro, f1_weighted, precision_macro, precision_weighted, recall_macro, recall_weighted, train_agg_KL = calc_stats(model, data["Xi"], data["Yi"], data["Ya"], data["Y"], data["A"], data["I"],
                                            simulation_params["batch_size"])
     if data["dev_Y"] is not None:
 
@@ -242,15 +238,15 @@ def train_disco(data, simulation_params, disco_model_params, params):
             # sample without replacement the label distribution data
             i_s = data["I"][ptr_indx, :]
             a_s = data["A"][ptr_indx, :]
-            y_s = tf.cast(data["Y"][ptr_indx, :], dtype=tf.float32)
-            xi_s = tf.cast(data["Xi"][ptr_indx, :], dtype=tf.float32)
-            yi_s = tf.cast(data["Yi"][ptr_indx, :], dtype=tf.float32)
-            ya_s = tf.cast(data["Ya"][ptr_indx, :], dtype=tf.float32)
+            y_s = torch.tensor(data["Y"][ptr_indx, :], dtype=torch.float32, device=device)
+            xi_s = torch.tensor(data["Xi"][ptr_indx, :], dtype=torch.float32, device=device)
+            yi_s = torch.tensor(data["Yi"][ptr_indx, :], dtype=torch.float32, device=device)
+            ya_s = torch.tensor(data["Ya"][ptr_indx, :], dtype=torch.float32, device=device)
             mark += 1
 
             # update model parameters and track approximate training loss
             L_t = model.update(xi_s, a_s, yi_s, ya_s, y_s, disco_model_params["update_radius"])
-            L = (L_t * y_s.shape[0]) + L
+            L = (L_t.item() * y_s.shape[0]) + L
             Ns += y_s.shape[0]
             print("\r{0}: L = {1}  ({2} samples seen)".format(e, (L / Ns), Ns), end="")
         print()
@@ -286,13 +282,12 @@ def train_disco(data, simulation_params, disco_model_params, params):
     else:
         wandb_logging_train(params,e,agg_acc, train_agg_KL, f1_macro, precision_macro, recall_macro)
 
-def read_wandb_sweep_id(sweep_id,params, simulation_params, gpu_tag,run_count,disco_model_params):
+def read_wandb_sweep_id(sweep_id, params, simulation_params, run_count):
     data = read_data(params)
     def train(config=None):
         with wandb.init(config=config):
             disco_model_params = wandb.config
-            with tf.device(gpu_tag):
-                train_disco(data, simulation_params, disco_model_params, params)
+            train_disco(data, simulation_params, disco_model_params, params)
 
     wandb.agent(sweep_id, train, count=run_count)
 
@@ -315,13 +310,11 @@ def main():
     if gpu_id>-1:
         print(" > Using GPU ID {0}".format(gpu_id))
         os.environ["CUDA_VISIBLE_DEVICES"] = "{0}".format(gpu_id)
-        gpu_tag = '/GPU:0'
     else:
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-        gpu_tag = '/CPU:0'
 
     params, simulation_params, disco_model_params = get_params(cfg_fname)
-    read_wandb_sweep_id(sweep_id,params, simulation_params, gpu_tag,run_count,disco_model_params)
+    read_wandb_sweep_id(sweep_id, params, simulation_params, run_count)
 
 
 

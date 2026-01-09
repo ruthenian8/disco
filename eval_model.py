@@ -1,6 +1,6 @@
 import os
 import sys, getopt
-import tensorflow as tf
+import torch
 import numpy as np
 import pandas as pd
 from utils.utils import load_object
@@ -183,11 +183,10 @@ def main():
     if use_gpu:
         print(" > Using GPU ID {0}".format(mid))
         os.environ["CUDA_VISIBLE_DEVICES"]="{0}".format(mid)
-        gpu_tag = '/GPU:0'
-        #tf.config.experimental.set_memory_growth(gpu, True)
+        gpu_tag = 'cuda'
     else:
         os.environ["CUDA_VISIBLE_DEVICES"]="-1"
-        gpu_tag = '/CPU:0'
+        gpu_tag = 'cpu'
     
     ################################################################################
     # load in design matrices
@@ -224,44 +223,37 @@ def main():
         ################################################################################
         # set up label distributional learning model
         ################################################################################
-        with tf.device(gpu_tag):
-            eps = 1e-7
-            model = load_object(model_fname)
-            model.drop_p = 0.0
-            # check model's accuracy on the dataset it was fit on
-            # y_ind = tf.cast(tf.argmax(tf.cast(Y,dtype=tf.float32),1),dtype=tf.int32)
-            # acc, L, _, _ = calc_stats(model, Xi, Yi, Ya, Y, A, I, batch_size)
-            # print(" Acc = {0}  L = {1}".format(acc,L))
+        model = load_object(model_fname)
+        model.drop_p = 0.0
+        device = torch.device(gpu_tag if torch.cuda.is_available() else "cpu")
+        model.to(device)
+        # check model's accuracy on the dataset it was fit on
+        # y_ind = tf.cast(tf.argmax(tf.cast(Y,dtype=tf.float32),1),dtype=tf.int32)
+        # acc, L, _, _ = calc_stats(model, Xi, Yi, Ya, Y, A, I, batch_size)
+        # print(" Acc = {0}  L = {1}".format(acc,L))
 
-            ############################################################################
-            # choose particular sample form the dataset to see how to use model at test time
-            ############################################################################
-            s_ptr = item_index #int( tf.argmax(comp) )
-            x_s = tf.cast(np.expand_dims(Xi[s_ptr,:],axis=0),dtype=tf.float32)
-            y_s = tf.cast(np.expand_dims(Y[s_ptr,:],axis=0),dtype=tf.float32)
-            y_lab = int(tf.argmax(y_s,axis=1))
-            yi_s = tf.cast(np.expand_dims(Yi[s_ptr,:],axis=0),dtype=tf.float32)
-            ya_s = tf.cast(np.expand_dims(Ya[s_ptr,:],axis=0),dtype=tf.float32)
-            i_s = I[s_ptr,:]
-            a_s = A[s_ptr,:]
+        ############################################################################
+        # choose particular sample form the dataset to see how to use model at test time
+        ############################################################################
+        s_ptr = item_index #int( tf.argmax(comp) )
+        x_s = torch.tensor(np.expand_dims(Xi[s_ptr,:],axis=0), dtype=torch.float32, device=device)
+        py, _ = model.decode_y_ensemble(x_s)
+        yhat_set = torch.argmax(py, dim=1).cpu().tolist()
+        
+        predicted_label = Counter(yhat_set)
+        total_labels = sum(predicted_label.values())
+        predicted_label_dist = [predicted_label[x]/total_labels for x in range(len(empirical_label))]
 
-            py, _ = model.decode_y_ensemble(x_s)
-            yhat_set = tf.argmax(py,axis=1).numpy().tolist()
-            
-            predicted_label = Counter(yhat_set)
-            total_labels = sum(predicted_label.values())
-            predicted_label_dist = [predicted_label[x]/total_labels for x in range(len(empirical_label))]
-
-            if len(predicted_label_dist) == len(empirical_label):
-                predicitions.append(predicted_label_dist)
-                row_to_write = {}
-                row_to_write['message'] = message
-                row_to_write['message_id'] = item_index
-                row_to_write['labels'] = predicted_label_dist
-                data_to_write.append(row_to_write)
-            else:
-                print("Label class mismatch")
-                sys.exit()
+        if len(predicted_label_dist) == len(empirical_label):
+            predicitions.append(predicted_label_dist)
+            row_to_write = {}
+            row_to_write['message'] = message
+            row_to_write['message_id'] = item_index
+            row_to_write['labels'] = predicted_label_dist
+            data_to_write.append(row_to_write)
+        else:
+            print("Label class mismatch")
+            sys.exit()
 
     results = {}
     print("Size of empirical label set {0}*{1} | Shape of predicted label set {2}*{3}".format(len(empirical_labels),len(empirical_labels[0]),len(predicitions),len(predicitions[0])))

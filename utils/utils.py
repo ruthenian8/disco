@@ -3,16 +3,14 @@ Utilities function file
 
 @author DisCo Authors
 """
-import tensorflow as tf
+import torch
 import numpy as np
 import pickle
-import sys
-import os
 from utils.config import Config
 seed = 69
-#tf.random.set_random_seed(seed=seed)
-
-tf.random.set_seed(seed=seed)
+torch.manual_seed(seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(seed)
 np.random.seed(seed)
 
 def save_object(model, fname):
@@ -27,10 +25,11 @@ def load_object(fname):
     return model
 
 def scale_feat(x, a=-1.0, b=1.0):
-    max_x = tf.reduce_max(x,axis=1,keepdims=True)
-    min_x = tf.reduce_min(x,axis=1,keepdims=True)
+    x = torch.as_tensor(x, dtype=torch.float32)
+    max_x = torch.max(x, dim=1, keepdim=True).values
+    min_x = torch.min(x, dim=1, keepdim=True).values
     x_prime = a + ( ( (x - min_x) * (b - a) )/(max_x - min_x) )
-    return tf.cast(x_prime, dtype=tf.float32)
+    return x_prime.to(torch.float32)
 
 def calc_mode(value_list):
     if len(value_list) == 0:
@@ -62,17 +61,17 @@ def D_KL(px, qx, keep_batch=False):
     @author DisCo Authors
     '''
     eps = 1e-6
-    px_ = tf.clip_by_value(px, eps, 1.0-eps)
-    log_px = tf.math.log(px_)
-    qx_ = tf.clip_by_value(qx, eps, 1.0-eps)
-    log_qx = tf.math.log(qx_)
+    px_ = torch.clamp(px, eps, 1.0 - eps)
+    log_px = torch.log(px_)
+    qx_ = torch.clamp(qx, eps, 1.0 - eps)
+    log_qx = torch.log(qx_)
 
-    term1 = tf.reduce_sum(-(px_ * log_px),axis=1,keepdims=True)
-    term2 = tf.reduce_sum(px_ * log_qx,axis=1,keepdims=True)
+    term1 = torch.sum(-(px_ * log_px), dim=1, keepdim=True)
+    term2 = torch.sum(px_ * log_qx, dim=1, keepdim=True)
     KL = -(term1 + term2)
     loss = KL
     if not keep_batch:
-        loss = tf.math.reduce_mean(KL) #,axis=0)
+        loss = torch.mean(KL) #,axis=0)
     return loss
 
 def D_KL_(qx, px, keep_batch=False):
@@ -81,16 +80,16 @@ def D_KL_(qx, px, keep_batch=False):
     @author DisCo Authors
     '''
     eps = 1e-6
-    qx_ = tf.clip_by_value(qx, eps, 1.0-eps)
-    px_ = tf.clip_by_value(px, eps, 1.0-eps)
-    log_qx = tf.math.log(qx_)
-    log_px = tf.math.log(px_)
-    term1 = tf.reduce_sum(qx_ * log_qx,axis=1,keepdims=True)
-    term2 = tf.reduce_sum(qx_ * log_px,axis=1,keepdims=True)
+    qx_ = torch.clamp(qx, eps, 1.0 - eps)
+    px_ = torch.clamp(px, eps, 1.0 - eps)
+    log_qx = torch.log(qx_)
+    log_px = torch.log(px_)
+    term1 = torch.sum(qx_ * log_qx, dim=1, keepdim=True)
+    term2 = torch.sum(qx_ * log_px, dim=1, keepdim=True)
     KL = term1 - term2
     loss = KL
     if not keep_batch:
-        loss = tf.math.reduce_mean(KL) #,axis=0)
+        loss = torch.mean(KL) #,axis=0)
     return loss
 
 def mse(x_true, x_pred, keep_batch=False):
@@ -102,10 +101,9 @@ def mse(x_true, x_pred, keep_batch=False):
     se = diff * diff # 0.5 # squared error
     # NLL = -( -se )
     if not keep_batch:
-        mse = tf.math.reduce_mean(se)
+        mse = torch.mean(se)
     else:
-        mse = tf.reduce_sum(se, axis=-1)
-        mse = tf.expand_dims(mse,axis=1)
+        mse = torch.sum(se, dim=-1, keepdim=True)
     return mse
 
 def drop_out(input, rate=0.0, seed=69):
@@ -116,8 +114,9 @@ def drop_out(input, rate=0.0, seed=69):
            expectation of the activation output
         @author DisCo Authors
     """
-    mask = tf.math.less_equal( tf.random.uniform(shape=(input.shape[0],input.shape[1]), minval=0.0, maxval=1.0, dtype=tf.float32, seed=seed),(1.0 - rate))
-    mask = tf.cast(mask, tf.float32) * (1.0 / (1.0 - rate))
+    torch.manual_seed(seed)
+    mask = torch.rand((input.shape[0], input.shape[1]), device=input.device) <= (1.0 - rate)
+    mask = mask.to(torch.float32) * (1.0 / (1.0 - rate))
     output = input * mask
     return output, mask
     
@@ -128,9 +127,9 @@ def softmax(x, tau=0.0):
     """
     if tau > 0.0:
         x = x / tau
-    max_x = tf.expand_dims( tf.reduce_max(x, axis=1), axis=1)
-    exp_x = tf.exp(tf.subtract(x, max_x))
-    return exp_x / tf.expand_dims( tf.reduce_sum(exp_x, axis=1), axis=1)
+    max_x = torch.max(x, dim=1, keepdim=True).values
+    exp_x = torch.exp(x - max_x)
+    return exp_x / torch.sum(exp_x, dim=1, keepdim=True)
 
 def calc_catNLL(target, prob, keep_batch=False):
     """
@@ -138,17 +137,17 @@ def calc_catNLL(target, prob, keep_batch=False):
         for a target (one-hot) label encoding.
     """
     eps = 1e-7
-    py = tf.clip_by_value(prob, eps, 1.0-eps)
-    Ly = -tf.reduce_sum(tf.math.log(py) * target, axis=1, keepdims=True)
+    py = torch.clamp(prob, eps, 1.0 - eps)
+    Ly = -torch.sum(torch.log(py) * target, dim=1, keepdim=True)
     if keep_batch is False:
-        return tf.reduce_mean(Ly)
+        return torch.mean(Ly)
     return Ly
 
 def sample_gaussian(shape, mu=0.0, sig=1.0):
     """
         Samples a multivariate Gaussian assuming a diagonal covariance
     """
-    eps = tf.random.normal(shape, mean=mu, stddev=sig, seed=seed)
+    eps = torch.normal(mean=mu, std=sig, size=shape)
     return eps * sig + mu
 
 def calc_gaussian_KL(mu1, sigSqr1, log_var1, mu2, sigSqr2, log_var2):
@@ -161,39 +160,41 @@ def calc_gaussian_KL(mu1, sigSqr1, log_var1, mu2, sigSqr2, log_var2):
     diff = (mu1 - mu2)
     term2 = (sigSqr1 + (diff ** 2))/(sigSqr2 * 2 + eps)
     kl = term1 + term2 - 0.5
-    return tf.reduce_sum(kl,axis=1,keepdims=True)
+    return torch.sum(kl, dim=1, keepdim=True)
 
 def calc_gaussian_KL_simple(mu, log_sigma_sqr):
-    return -0.5 * tf.reduce_sum(1 + log_sigma_sqr - (mu * mu) - tf.math.exp(log_sigma_sqr), axis=1)
+    return -0.5 * torch.sum(1 + log_sigma_sqr - (mu * mu) - torch.exp(log_sigma_sqr), dim=1)
 
 def init_weights(init_type, shape, seed, stddev=1.0):
+    torch.manual_seed(seed)
     if init_type == "he_uniform":
-        initializer = tf.compat.v1.keras.initializers.he_uniform()
-        params = initializer(shape) #, seed=seed )
+        params = torch.empty(shape)
+        torch.nn.init.kaiming_uniform_(params, nonlinearity="relu")
     elif init_type == "he_normal":
-        initializer = tf.compat.v1.keras.initializers.he_normal()
-        params = initializer(shape) #, seed=seed )
+        params = torch.empty(shape)
+        torch.nn.init.kaiming_normal_(params, nonlinearity="relu")
     elif init_type == "classic_glorot":
         N = (shape[0] + shape[1]) * 1.0
         bound = 4.0 * np.sqrt(6.0/N)
-        params = tf.random.uniform(shape, minval=-bound, maxval=bound, seed=seed)
+        params = torch.empty(shape).uniform_(-bound, bound)
     elif init_type == "glorot_normal":
-        initializer = tf.compat.v1.keras.initializers.glorot_normal()
-        params = initializer(shape) #, seed=seed )
+        params = torch.empty(shape)
+        torch.nn.init.xavier_normal_(params)
     elif init_type == "glorot_uniform":
-        initializer = tf.compat.v1.keras.initializers.glorot_uniform()
-        params = initializer(shape) #, seed=seed )
+        params = torch.empty(shape)
+        torch.nn.init.xavier_uniform_(params)
     elif init_type == "orthogonal":
-        initializer = tf.compat.v1.keras.initializers.orthogonal(gain=stddev)
-        params = initializer(shape)
+        params = torch.empty(shape)
+        torch.nn.init.orthogonal_(params, gain=stddev)
     elif init_type == "truncated_normal":
-        params = tf.random.truncated_normal(shape, stddev=stddev, seed=seed)
+        params = torch.empty(shape)
+        torch.nn.init.trunc_normal_(params, std=stddev)
     elif init_type == "normal":
-        params = tf.random.normal(shape, stddev=stddev, seed=seed)
+        params = torch.normal(mean=0.0, std=stddev, size=shape)
     else: # alex_uniform
         k = 1.0 / (shape[0] * 1.0) # 1/in_features
         bound = np.sqrt(k)
-        params = tf.random.uniform(shape, minval=-bound, maxval=bound, seed=seed)
+        params = torch.empty(shape).uniform_(-bound, bound)
 
     return params
 
@@ -203,7 +204,7 @@ def l1_l2_norm_calculation(theta_y,norm_type,mini_bath_size):
     """
     norm_value = 0.0
     for var in theta_y:
-        w_norm = tf.norm(var,ord=norm_type)
+        w_norm = torch.linalg.norm(var, ord=norm_type)
         # if norm_type == 1:
         #     w_norm = tf.reduce_sum(tf.math.abs(var))
         # else:
@@ -239,7 +240,7 @@ def cumulative_kl(x,y,fraction=0.5):
 
 def gen_data_plot(Xn, Yn, use_tsne=False, fname="Xi", out_dir=""):
     z_top = Xn
-    y_ind = tf.cast(tf.argmax(tf.cast(Yn,dtype=tf.float32),1),dtype=tf.int32).numpy()
+    y_ind = torch.argmax(torch.as_tensor(Yn, dtype=torch.float32), dim=1).cpu().numpy()
     import matplotlib #.pyplot as plt
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt

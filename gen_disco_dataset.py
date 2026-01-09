@@ -1,12 +1,10 @@
 import os
 import sys, getopt, optparse
-import pickle
 import numpy as np
-import tensorflow as tf
+import torch
 # sys.path.insert(0, 'utils/')
-from utils.utils import scale_feat, gen_data_plot
+from utils.utils import gen_data_plot
 import pandas as pd
-import pdb
 
 
 """
@@ -167,7 +165,7 @@ n_i = np.max(Ii) + 1
 nC = Y.shape[1]
 Ai = np.expand_dims(np.asarray(Ai),axis=1)
 print(n_i)
-Yn = tf.cast(Y,dtype=tf.float32)
+Yn = torch.tensor(Y, dtype=torch.float32)
 
 
 Xi = X

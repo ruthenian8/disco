@@ -30,8 +30,9 @@ def scale_feat(x, a=-1.0, b=1.0):
     min_x = torch.min(x, dim=1, keepdim=True).values
     denom = max_x - min_x
     # Avoid division by zero for constant features (where max_x == min_x)
-    denom = torch.where(denom == 0, torch.ones_like(denom), denom)
-    x_prime = a + (((x - min_x) * (b - a)) / denom)
+    # For constant features, return the midpoint of the range [a, b]
+    midpoint = torch.full_like(x, (a + b) / 2)
+    x_prime = torch.where(denom == 0, midpoint, a + (((x - min_x) * (b - a)) / denom))
     return x_prime.to(torch.float32)
 
 def calc_mode(value_list):

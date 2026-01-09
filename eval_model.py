@@ -217,7 +217,10 @@ def main():
     ################################################################################
     model = load_object(model_fname)
     model.drop_p = 0.0
-    device = torch.device(gpu_tag if torch.cuda.is_available() else "cpu")
+    if isinstance(gpu_tag, str) and gpu_tag.startswith("cuda") and not torch.cuda.is_available():
+        device = torch.device("cpu")
+    else:
+        device = torch.device(gpu_tag)
     model.to(device)
     
     empirical_labels = []

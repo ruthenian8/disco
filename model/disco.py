@@ -101,7 +101,7 @@ class DISCO(nn.Module):
         self.moment_v = 0.9
         adam_eps = 1e-7 #1e-8  1e-6
         self.y_opt = None
-        self.y_opt = torch.optim.Adam(self.theta_y, lr=self.eta_v, betas=(0.9, 0.999), eps=adam_eps)
+        self.y_opt = torch.optim.Adam(self.parameters(), lr=self.eta_v, betas=(0.9, 0.999), eps=adam_eps)
         self.to(self.device)
 
     def set_opt(self, opt_type, eta_v, moment_v=0.9):
@@ -109,11 +109,11 @@ class DISCO(nn.Module):
         self.eta_v = eta_v
         self.moment_v = moment_v
         if opt_type == "adam":
-            self.y_opt = torch.optim.Adam(self.theta_y, lr=self.eta_v, betas=(0.9, 0.999), eps=adam_eps)
+            self.y_opt = torch.optim.Adam(self.parameters(), lr=self.eta_v, betas=(0.9, 0.999), eps=adam_eps)
         elif opt_type == "rmsprop":
-            self.y_opt = torch.optim.RMSprop(self.theta_y, lr=self.eta_v, alpha=0.9, momentum=self.moment_v, eps=1e-6)
+            self.y_opt = torch.optim.RMSprop(self.parameters(), lr=self.eta_v, alpha=0.9, momentum=self.moment_v, eps=1e-6)
         else:
-            self.y_opt = torch.optim.SGD(self.theta_y, lr=self.eta_v)
+            self.y_opt = torch.optim.SGD(self.parameters(), lr=self.eta_v)
 
     def calc_loss(self, y, yi, ya, y_prob, yi_prob, ya_prob):
         Ly = calc_catNLL(target=y,prob=y_prob,keep_batch=True) #Ly = D_KL(y_prob, y)
@@ -144,16 +144,6 @@ class DISCO(nn.Module):
         """
         av = torch.as_tensor(a, dtype=torch.long, device=self.device)
         av = av.squeeze()
-        # Ensure annotator indices are within the valid range [0, a_dim)
-        if av.numel() > 0:
-            a_dim = self.Wa.size(0)
-            if torch.any(av < 0) or torch.any(av >= a_dim):
-                min_idx = torch.min(av)
-                max_idx = torch.max(av)
-                raise IndexError(
-                    f"Annotator index out of range: observed min={min_idx.item()}, "
-                    f"max={max_idx.item()}, but valid range is [0, {a_dim - 1}]."
-                )
         z_enc = self.Wa[av]
         if len(z_enc.shape) < 2:
             z_enc = z_enc.unsqueeze(0)

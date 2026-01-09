@@ -111,7 +111,7 @@ def calc_stats(model, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="mode",
         ptr_s += len(ptr_indx)
         ptr_e += len(ptr_indx)
         # sample without replacement the label distribution data
-        a_s = A[ptr_indx, :]
+        a_s = torch.tensor(A[ptr_indx, :], dtype=torch.long, device=device)
         xi_s = torch.tensor(Xi[ptr_indx, :], dtype=torch.float32, device=device)
         y_s = torch.tensor(Y[ptr_indx, :], dtype=torch.float32, device=device)
         y_ind = torch.argmax(y_s, dim=1).to(torch.int64)
@@ -244,7 +244,7 @@ def train_disco(data, simulation_params, disco_model_params, params):
             ptr_s += len(ptr_indx)
             ptr_e += len(ptr_indx)
             # sample without replacement the label distribution data
-            a_s = data["A"][ptr_indx, :]
+            a_s = torch.tensor(data["A"][ptr_indx, :], dtype=torch.long, device=device)
             y_s = torch.tensor(data["Y"][ptr_indx, :], dtype=torch.float32, device=device)
             xi_s = torch.tensor(data["Xi"][ptr_indx, :], dtype=torch.float32, device=device)
             yi_s = torch.tensor(data["Yi"][ptr_indx, :], dtype=torch.float32, device=device)

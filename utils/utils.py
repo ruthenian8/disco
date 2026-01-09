@@ -16,6 +16,15 @@ np.random.seed(seed)
 
 
 class DiscoDataset(Dataset):
+    """Dataset wrapper for DisCo training inputs.
+
+    Args:
+        xi: N x n_xi input feature matrix (instance features).
+        yi: N x yi_dim matrix of label-independent features.
+        ya: N x ya_dim matrix of auxiliary features paired with labels/attributes.
+        y: N x y_dim matrix of label targets (one-hot or probabilistic).
+        a: N-length vector of attribute/group ids.
+    """
     def __init__(self, xi, yi, ya, y, a):
         self.xi = xi
         self.yi = yi

@@ -114,7 +114,6 @@ def drop_out(input, rate=0.0, seed=69):
            expectation of the activation output
         @author DisCo Authors
     """
-    torch.manual_seed(seed)
     mask = torch.rand((input.shape[0], input.shape[1]), device=input.device) <= (1.0 - rate)
     mask = mask.to(torch.float32) * (1.0 / (1.0 - rate))
     output = input * mask
@@ -148,7 +147,7 @@ def sample_gaussian(shape, mu=0.0, sig=1.0):
         Samples a multivariate Gaussian assuming a diagonal covariance
     """
     eps = torch.normal(mean=mu, std=sig, size=shape)
-    return eps * sig + mu
+    return eps
 
 def calc_gaussian_KL(mu1, sigSqr1, log_var1, mu2, sigSqr2, log_var2):
     """
@@ -166,7 +165,6 @@ def calc_gaussian_KL_simple(mu, log_sigma_sqr):
     return -0.5 * torch.sum(1 + log_sigma_sqr - (mu * mu) - torch.exp(log_sigma_sqr), dim=1)
 
 def init_weights(init_type, shape, seed, stddev=1.0):
-    torch.manual_seed(seed)
     if init_type == "he_uniform":
         params = torch.empty(shape)
         torch.nn.init.kaiming_uniform_(params, nonlinearity="relu")
@@ -198,7 +196,7 @@ def init_weights(init_type, shape, seed, stddev=1.0):
 
     return params
 
-def l1_l2_norm_calculation(theta_y,norm_type,mini_bath_size):
+def l1_l2_norm_calculation(theta_y,norm_type,mini_batch_size):
     """
         Normalizes based on L1 and L2 operations. 
     """
@@ -210,7 +208,7 @@ def l1_l2_norm_calculation(theta_y,norm_type,mini_bath_size):
         # else:
         #     w_norm = tf.reduce_sum(var*var)
         norm_value += (w_norm*w_norm)
-    norm_value = norm_value * 1/mini_bath_size
+    norm_value = norm_value * 1/mini_batch_size
     return norm_value
 
 ################################################################################

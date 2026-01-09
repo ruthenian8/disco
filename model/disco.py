@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 # sys.path.insert(0, '../utils/')
 sys.path.append('../utils')
-from utils.utils import softmax, init_weights, calc_catNLL, D_KL, calc_mode, drop_out, l1_l2_norm_calculation
+from utils.utils import softmax, init_weights, calc_catNLL, D_KL, drop_out, l1_l2_norm_calculation
 
 class DISCO(nn.Module):
     """
@@ -101,8 +101,8 @@ class DISCO(nn.Module):
         self.moment_v = 0.9
         adam_eps = 1e-7 #1e-8  1e-6
         self.y_opt = None
-        self.to(self.device)
         self.y_opt = torch.optim.Adam(self.theta_y, lr=self.eta_v, betas=(0.9, 0.999), eps=adam_eps)
+        self.to(self.device)
 
     def set_opt(self, opt_type, eta_v, moment_v=0.9):
         adam_eps = 1e-7
@@ -144,6 +144,16 @@ class DISCO(nn.Module):
         """
         av = torch.as_tensor(a, dtype=torch.long, device=self.device)
         av = av.squeeze()
+        # Ensure annotator indices are within the valid range [0, a_dim)
+        if av.numel() > 0:
+            a_dim = self.Wa.size(0)
+            if torch.any(av < 0) or torch.any(av >= a_dim):
+                min_idx = torch.min(av)
+                max_idx = torch.max(av)
+                raise IndexError(
+                    f"Annotator index out of range: observed min={min_idx.item()}, "
+                    f"max={max_idx.item()}, but valid range is [0, {a_dim - 1}]."
+                )
         z_enc = self.Wa[av]
         if len(z_enc.shape) < 2:
             z_enc = z_enc.unsqueeze(0)
@@ -159,7 +169,6 @@ class DISCO(nn.Module):
         return z
 
     def transform(self,z):
-        z_e = z
         z_p = self.fx(torch.matmul(z, self.Wp))
         if self.drop_p > 0.0:
             z_p, _ = drop_out(z_p, rate=self.drop_p)
@@ -201,11 +210,11 @@ class DISCO(nn.Module):
 
         l1 = 0.0
         l2 = 0.0
-        mini_bath_size = y.shape[0] * 1.0
+        mini_batch_size = y.shape[0] * 1.0
         if self.l1_norm > 0:
-            l1 = l1_l2_norm_calculation(self.theta_y, 1, mini_bath_size) * self.l1_norm
+            l1 = l1_l2_norm_calculation(self.theta_y, 1, mini_batch_size) * self.l1_norm
         if self.l2_norm > 0:
-            l2 = l1_l2_norm_calculation(self.theta_y, 2, mini_bath_size) * self.l2_norm
+            l2 = l1_l2_norm_calculation(self.theta_y, 2, mini_batch_size) * self.l2_norm
         L_t = Ly + Lyi + Lya + l1 + l2
 
         L_t.backward()
@@ -278,15 +287,18 @@ class DISCO(nn.Module):
         return z_a
 
     def clear(self):
-        self.z_i = torch.zeros([1, self.lat_dim], device=self.device)
-        self.z_a = torch.zeros([1, self.lat_dim], device=self.device)
+        self.z_i.zero_()
+        self.z_a.zero_()
 
     def to(self, device):
+        # First, delegate device transfer of parameters/buffers to nn.Module
+        module = super().to(device)
+        # Then, update internal device reference
         self.device = torch.device(device)
-        super().to(self.device)
+        # Finally, move optimizer state tensors to the new device
         if self.y_opt is not None:
             for state in self.y_opt.state.values():
                 for key, value in state.items():
                     if torch.is_tensor(value):
                         state[key] = value.to(self.device)
-        return self
+        return module

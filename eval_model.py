@@ -217,8 +217,12 @@ def main():
     ################################################################################
     model = load_object(model_fname)
     model.drop_p = 0.0
-    if isinstance(gpu_tag, str) and gpu_tag.startswith("cuda") and not torch.cuda.is_available():
-        device = torch.device("cpu")
+    # Handle device selection with proper fallback
+    if isinstance(gpu_tag, str):
+        if gpu_tag.startswith("cuda") and not torch.cuda.is_available():
+            device = torch.device("cpu")
+        else:
+            device = torch.device(gpu_tag)
     else:
         device = torch.device(gpu_tag)
     model.to(device)

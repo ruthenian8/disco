@@ -146,10 +146,10 @@ class DISCO(nn.Module):
         av = av.squeeze()
         # Ensure annotator indices are within the valid range [0, a_dim)
         if av.numel() > 0:
-            min_idx = torch.min(av)
-            max_idx = torch.max(av)
             a_dim = self.Wa.size(0)
-            if (min_idx < 0) or (max_idx >= a_dim):
+            if torch.any(av < 0) or torch.any(av >= a_dim):
+                min_idx = torch.min(av)
+                max_idx = torch.max(av)
                 raise IndexError(
                     f"Annotator index out of range: observed min={min_idx.item()}, "
                     f"max={max_idx.item()}, but valid range is [0, {a_dim - 1}]."

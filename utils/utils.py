@@ -6,12 +6,34 @@ Utilities function file
 import torch
 import numpy as np
 import pickle
+from torch.utils.data import Dataset
 from .config import Config
 seed = 69
 torch.manual_seed(seed)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(seed)
 np.random.seed(seed)
+
+
+class DiscoDataset(Dataset):
+    def __init__(self, xi, yi, ya, y, a):
+        self.xi = xi
+        self.yi = yi
+        self.ya = ya
+        self.y = y
+        self.a = a
+
+    def __len__(self):
+        return self.y.shape[0]
+
+    def __getitem__(self, idx):
+        return {
+            "a": torch.as_tensor(self.a[idx], dtype=torch.long),
+            "xi": torch.as_tensor(self.xi[idx], dtype=torch.float32),
+            "yi": torch.as_tensor(self.yi[idx], dtype=torch.float32),
+            "ya": torch.as_tensor(self.ya[idx], dtype=torch.float32),
+            "y": torch.as_tensor(self.y[idx], dtype=torch.float32),
+        }
 
 def save_object(model, fname):
     fd = open(fname, 'wb')
@@ -357,6 +379,8 @@ def read_data(params):
     data["dev_Y"] = None
     data["dev_I"] = None
     data["dev_A"] = None
+    data["train_dataset"] = None
+    data["dev_dataset"] = None
     if params["dev_y_fname"] is not None:
         data["dev_Xi"] = np.load(params["dev_xi_fname"])
         data["dev_Yi"] = np.load(params["dev_yi_fname"])
@@ -364,6 +388,13 @@ def read_data(params):
         data["dev_Y"] = np.load(params["dev_y_fname"])
         data["dev_I"] = np.load(params["dev_i_fname"])
         data["dev_A"] = np.load(params["dev_a_fname"])
+        data["dev_dataset"] = DiscoDataset(
+            data["dev_Xi"],
+            data["dev_Yi"],
+            data["dev_Ya"],
+            data["dev_Y"],
+            data["dev_A"],
+        )
     # automatically count num of total items, total annotators, and get design matrix dimensions
     data["n_i"] = np.max(data["I"]) + 1  # 2000 # number items
     data["n_a"] = np.max(data["A"]) + 1  # 50 # number annotators
@@ -371,6 +402,13 @@ def read_data(params):
     data["ya_dim"] = data["Ya"].shape[1]
     data["y_dim"] = data["Y"].shape[1]
     data["n_xi"] = data["Xi"].shape[1]
+    data["train_dataset"] = DiscoDataset(
+        data["Xi"],
+        data["Yi"],
+        data["Ya"],
+        data["Y"],
+        data["A"],
+    )
 
     print("Xi.shape = ", data["Xi"].shape)
     print("Yi.shape = ", data["Yi"].shape)

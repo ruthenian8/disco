@@ -1,11 +1,12 @@
 import os
 import torch
 import numpy as np
+from torch.utils.data import DataLoader, Subset
 
 # sys.path.insert(0, 'utils/')
 # sys.path.insert(0, 'model/')
 from model.disco import DISCO
-from utils.utils import save_object, calc_mode, D_KL, get_params, read_data
+from utils.utils import DiscoDataset, save_object, calc_mode, D_KL, get_params, read_data
 from sklearn.metrics import classification_report, f1_score
 import argparse
 import wandb
@@ -22,8 +23,6 @@ os.environ["WANDB_API_KEY"] = wandb_creds()
 
     In order to run this, you initially need to create a Sweep on Weights and Biases. 
 """
-
-
 
 def wandb_logging_dev(disco_model_params,epoch,agg_acc, KLi, dev_agg_acc, dev_KLi, f1_macro, dev_f1_macro, precision_macro, dev_precision_macro, recall_macro, dev_recall_macro):
     wandb_log = {
@@ -72,25 +71,11 @@ def calc_stats(model, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="mode",
     """
     drop_p = model.drop_p + 0
     model.drop_p = 0.0  # turn off drop-out
-    Xi = Xi_
-    Yi = Yi_
-    Ya = Ya_
-    Y = Y_
-    A = A_
-    I = I_
+    dataset = DiscoDataset(Xi_, Yi_, Ya_, Y_, A_)
     if n_subset > 0:
-        ptrs = np.random.permutation(Y.shape[0])[0:n_subset]
-        Xi = Xi_[ptrs, :]
-        Yi = Yi_[ptrs, :]
-        Ya = Ya_[ptrs, :]
-        Y = Y_[ptrs, :]
-        A = A_[ptrs, :]
-        I = I_[ptrs, :]
-
-    ptrs = np.arange(Y.shape[0])
-    ptr_s = 0
-    ptr_e = batch_size
-    mark = 0
+        ptrs = np.random.permutation(len(dataset))[0:n_subset]
+        dataset = Subset(dataset, ptrs)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     L = 0.0
     KLi = 0.0
     KLa = 0.0
@@ -104,19 +89,13 @@ def calc_stats(model, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="mode",
     all_y_pred = []
     all_y_test = []
     
-    while ptr_s < len(ptrs):
-        if ptr_e > len(ptrs):
-            ptr_e = len(ptrs)
-        ptr_indx = ptrs[ptr_s:ptr_e]
-        ptr_s += len(ptr_indx)
-        ptr_e += len(ptr_indx)
-        # sample without replacement the label distribution data
-        a_s = torch.tensor(A[ptr_indx, :], dtype=torch.long, device=device)
-        xi_s = torch.tensor(Xi[ptr_indx, :], dtype=torch.float32, device=device)
-        y_s = torch.tensor(Y[ptr_indx, :], dtype=torch.float32, device=device)
+    for batch in dataloader:
+        a_s = batch["a"].to(device)
+        xi_s = batch["xi"].to(device)
+        y_s = batch["y"].to(device)
         y_ind = torch.argmax(y_s, dim=1).to(torch.int64)
-        yi_s = torch.tensor(Yi[ptr_indx, :], dtype=torch.float32, device=device)
-        ya_s = torch.tensor(Ya[ptr_indx, :], dtype=torch.float32, device=device)
+        yi_s = batch["yi"].to(device)
+        ya_s = batch["ya"].to(device)
 
         z = model.encode(xi_s, a_s)
         pY, _ = model.decode_y(z)
@@ -165,12 +144,13 @@ def calc_stats(model, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="mode",
 
         agg_acc += sub_acc
 
-    acc = acc / (Y.shape[0] * 1.0)
-    L = L / (Y.shape[0] * 1.0)
-    KLi = KLi / (Y.shape[0] * 1.0)
-    KLa = KLa / (Y.shape[0] * 1.0)
-    agg_KL = agg_KL / (Y.shape[0] * 1.0)
-    agg_acc = agg_acc / (Y.shape[0] * 1.0)
+    total_samples = len(dataset)
+    acc = acc / (total_samples * 1.0)
+    L = L / (total_samples * 1.0)
+    KLi = KLi / (total_samples * 1.0)
+    KLa = KLa / (total_samples * 1.0)
+    agg_KL = agg_KL / (total_samples * 1.0)
+    agg_acc = agg_acc / (total_samples * 1.0)
     model.drop_p = drop_p  # turn dropout back on
 
     # classification report using collected predictions and ground truth
@@ -231,25 +211,22 @@ def train_disco(data, simulation_params, disco_model_params, params):
             " {0}: Fit.Acc = {1}  E.Acc = {2} L = {3}  KLi = {4}  KLa = {5}".format(-1, acc, agg_acc, L, KLi, KLa))
     simulation_params["n_epoch"] = 5
     for e in range(simulation_params["n_epoch"]):
-        ptrs = np.random.permutation(data["Y"].shape[0])
-        ptr_s = 0
-        ptr_e = simulation_params["batch_size"]
-        mark = 0
+        train_dataset = data.get("train_dataset") or DiscoDataset(
+            data["Xi"],
+            data["Yi"],
+            data["Ya"],
+            data["Y"],
+            data["A"],
+        )
+        train_loader = DataLoader(train_dataset, batch_size=simulation_params["batch_size"], shuffle=True)
         L = 0.0  # epoch loss
         Ns = 0.0
-        while ptr_s < len(ptrs):
-            if ptr_e > len(ptrs):
-                ptr_e = len(ptrs)
-            ptr_indx = ptrs[ptr_s:ptr_e]
-            ptr_s += len(ptr_indx)
-            ptr_e += len(ptr_indx)
-            # sample without replacement the label distribution data
-            a_s = torch.tensor(data["A"][ptr_indx, :], dtype=torch.long, device=device)
-            y_s = torch.tensor(data["Y"][ptr_indx, :], dtype=torch.float32, device=device)
-            xi_s = torch.tensor(data["Xi"][ptr_indx, :], dtype=torch.float32, device=device)
-            yi_s = torch.tensor(data["Yi"][ptr_indx, :], dtype=torch.float32, device=device)
-            ya_s = torch.tensor(data["Ya"][ptr_indx, :], dtype=torch.float32, device=device)
-            mark += 1
+        for batch in train_loader:
+            a_s = batch["a"].to(device)
+            y_s = batch["y"].to(device)
+            xi_s = batch["xi"].to(device)
+            yi_s = batch["yi"].to(device)
+            ya_s = batch["ya"].to(device)
 
             # update model parameters and track approximate training loss
             L_t = model.update(xi_s, a_s, yi_s, ya_s, y_s, disco_model_params["update_radius"])

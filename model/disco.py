@@ -100,7 +100,6 @@ class DISCO(nn.Module):
         self.eta_v = 0.002
         self.moment_v = 0.9
         adam_eps = 1e-7 #1e-8  1e-6
-        self.y_opt = None
         self.y_opt = torch.optim.Adam(self.parameters(), lr=self.eta_v, betas=(0.9, 0.999), eps=adam_eps)
         self.to(self.device)
 

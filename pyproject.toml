@@ -18,4 +18,4 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["model", "model.*", "utils", "utils.*"]
+include = ["losses", "losses.*", "model", "model.*", "utils", "utils.*"]

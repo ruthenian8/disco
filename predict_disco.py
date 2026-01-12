@@ -1,6 +1,6 @@
 import os
 from train_disco_sweep import train_disco
-from utils.utils import get_params,read_data
+from utils import get_params, read_data
 import argparse
 
 """

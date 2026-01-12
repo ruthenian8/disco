@@ -3,7 +3,7 @@ import sys, getopt, optparse
 import numpy as np
 import torch
 # sys.path.insert(0, 'utils/')
-from utils.utils import gen_data_plot
+from utils import gen_data_plot
 import pandas as pd
 
 

@@ -3,7 +3,8 @@ import sys, getopt
 import torch
 import numpy as np
 import pandas as pd
-from utils.utils import load_object
+from model.disco import DISCO
+from utils import load_object
 from collections import Counter
 from sklearn.metrics import accuracy_score,classification_report,f1_score
 import math 
@@ -215,8 +216,12 @@ def main():
     ################################################################################
     # set up label distributional learning model (load once outside the loop)
     ################################################################################
-    model = load_object(model_fname)
-    model.drop_p = 0.0
+    checkpoint = load_object(model_fname)
+    config = checkpoint.get("config")
+    if config is None:
+        raise ValueError("Checkpoint missing config; cannot rebuild DISCO model.")
+    model = DISCO(**config)
+    model.load_state_dict(checkpoint["model"])
     # Handle device selection with proper fallback
     if isinstance(gpu_tag, str):
         if gpu_tag.startswith("cuda") and not torch.cuda.is_available():
@@ -226,43 +231,45 @@ def main():
     else:
         device = torch.device(gpu_tag)
     model.to(device)
+    model.eval()
     
     empirical_labels = []
     predicitions = []
     data_to_write = []
-    for unique_dataitem in tqdm(unique_dataitems):
-        item_index = raw_item_annotator_label.loc[raw_item_annotator_label['item'] == unique_dataitem].index[0] #there is a chance of multiple rows returned.
-        items = raw_item_annotator_label.loc[raw_item_annotator_label['item'] == unique_dataitem].head(1)
-        message = items['message'].values[0]
-        empirical_label = Yi[item_index]
-        empirical_labels.append(empirical_label)
-        # check model's accuracy on the dataset it was fit on
-        # y_ind = tf.cast(tf.argmax(tf.cast(Y,dtype=tf.float32),1),dtype=tf.int32)
-        # acc, L, _, _ = calc_stats(model, Xi, Yi, Ya, Y, A, I, batch_size)
-        # print(" Acc = {0}  L = {1}".format(acc,L))
+    with torch.no_grad():
+        for unique_dataitem in tqdm(unique_dataitems):
+            item_index = raw_item_annotator_label.loc[raw_item_annotator_label['item'] == unique_dataitem].index[0] #there is a chance of multiple rows returned.
+            items = raw_item_annotator_label.loc[raw_item_annotator_label['item'] == unique_dataitem].head(1)
+            message = items['message'].values[0]
+            empirical_label = Yi[item_index]
+            empirical_labels.append(empirical_label)
+            # check model's accuracy on the dataset it was fit on
+            # y_ind = tf.cast(tf.argmax(tf.cast(Y,dtype=tf.float32),1),dtype=tf.int32)
+            # acc, L, _, _ = calc_stats(model, Xi, Yi, Ya, Y, A, I, batch_size)
+            # print(" Acc = {0}  L = {1}".format(acc,L))
 
-        ############################################################################
-        # choose particular sample form the dataset to see how to use model at test time
-        ############################################################################
-        s_ptr = item_index #int( tf.argmax(comp) )
-        x_s = torch.tensor(np.expand_dims(Xi[s_ptr,:],axis=0), dtype=torch.float32, device=device)
-        py, _ = model.decode_y_ensemble(x_s)
-        yhat_set = torch.argmax(py, dim=1).cpu().tolist()
-        
-        predicted_label = Counter(yhat_set)
-        total_labels = sum(predicted_label.values())
-        predicted_label_dist = [predicted_label[x]/total_labels for x in range(len(empirical_label))]
+            ############################################################################
+            # choose particular sample form the dataset to see how to use model at test time
+            ############################################################################
+            s_ptr = item_index #int( tf.argmax(comp) )
+            x_s = torch.tensor(np.expand_dims(Xi[s_ptr,:],axis=0), dtype=torch.float32, device=device)
+            py, _ = model.decode_y_ensemble(x_s)
+            yhat_set = torch.argmax(py, dim=1).cpu().tolist()
+            
+            predicted_label = Counter(yhat_set)
+            total_labels = sum(predicted_label.values())
+            predicted_label_dist = [predicted_label[x]/total_labels for x in range(len(empirical_label))]
 
-        if len(predicted_label_dist) == len(empirical_label):
-            predicitions.append(predicted_label_dist)
-            row_to_write = {}
-            row_to_write['message'] = message
-            row_to_write['message_id'] = item_index
-            row_to_write['labels'] = predicted_label_dist
-            data_to_write.append(row_to_write)
-        else:
-            print("Label class mismatch")
-            sys.exit()
+            if len(predicted_label_dist) == len(empirical_label):
+                predicitions.append(predicted_label_dist)
+                row_to_write = {}
+                row_to_write['message'] = message
+                row_to_write['message_id'] = item_index
+                row_to_write['labels'] = predicted_label_dist
+                data_to_write.append(row_to_write)
+            else:
+                print("Label class mismatch")
+                sys.exit()
 
     results = {}
     print("Size of empirical label set {0}*{1} | Shape of predicted label set {2}*{3}".format(len(empirical_labels),len(empirical_labels[0]),len(predicitions),len(predicitions[0])))

@@ -339,8 +339,12 @@ def get_params(cfg_fname):
         "dev_a_fname": args.getArg("dev_a_fname"),
         "dev_y_fname": args.getArg("dev_y_fname"),
         "out_dir": args.getArg("out_dir"),
-        "dataset": args.getArg("dataset")
+        "dataset": args.getArg("dataset"),
+        "seed": None
     }
+    seed_value = args.getArg("seed")
+    if seed_value is not None:
+        params["seed"] = int(seed_value)
 
     simulation_params = {
         "n_epoch": int(args.getArg("n_epoch")),  # 100 #200 #500 #200 #50

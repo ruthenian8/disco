@@ -322,6 +322,9 @@ def main():
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
     params, simulation_params, disco_model_params = get_params(cfg_fname)
+    if params.get("seed") is not None:
+        torch.manual_seed(params["seed"])
+        np.random.seed(params["seed"])
     read_wandb_sweep_id(sweep_id, params, simulation_params, run_count)
 
 

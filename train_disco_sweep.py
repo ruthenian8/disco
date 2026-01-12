@@ -199,8 +199,22 @@ def train_disco(data, simulation_params, disco_model_params, params):
                   drop_p=disco_model_params["drop_p"], gamma_i=disco_model_params["gamma_i"],
                   gamma_a=disco_model_params["gamma_a"])
     model.to(device)
-    loss_fn = DiscoLoss(gamma_i=disco_model_params["gamma_i"], gamma_a=disco_model_params["gamma_a"])
-    optimizer = torch.optim.Adam(model.parameters(), lr=disco_model_params["learning_rate"])
+    loss_fn = DiscoLoss(
+        gamma_i=disco_model_params["gamma_i"],
+        gamma_a=disco_model_params["gamma_a"],
+        l1_norm=disco_model_params.get("l1_norm", 0.0),
+        l2_norm=disco_model_params.get("l2_norm", 0.0),
+    )
+    opt_type = str(disco_model_params.get("opt_type", "adam")).lower()
+    learning_rate = disco_model_params["learning_rate"]
+    if opt_type == "adam":
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    elif opt_type == "rmsprop":
+        optimizer = torch.optim.RMSprop(model.parameters(), lr=learning_rate)
+    elif opt_type == "sgd":
+        optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    else:
+        raise ValueError(f"Unsupported opt_type: {opt_type}")
 
     # Z = model.encode(Xi, A)
     # gen_data_plot(Z, Y, use_tsne=False, fname="latents")
@@ -266,7 +280,7 @@ def train_disco(data, simulation_params, disco_model_params, params):
                                                                            data["dev_Ya"], data["dev_Y"], data["dev_A"],
                                                                            data["dev_I"],
                                                                            simulation_params["batch_size"])
-                wandb_logging_dev(params,e,agg_acc, train_agg_KL, dev_agg_acc, dev_agg_KL, f1_macro, dev_f1_macro, precision_macro, dev_precision_macro, recall_macro, dev_recall_macro)
+                wandb_logging_dev(disco_model_params,e,agg_acc, train_agg_KL, dev_agg_acc, dev_agg_KL, f1_macro, dev_f1_macro, precision_macro, dev_precision_macro, recall_macro, dev_recall_macro)
                 print(" {0}: Fit.Acc = {1} E.Acc = {2} L = {3} | Dev.Acc = {4} E.Acc = {5}  KL = {6} ".format(e, acc,
                                                                                                               agg_acc,
                                                                                                               dev_acc,
@@ -274,7 +288,7 @@ def train_disco(data, simulation_params, disco_model_params, params):
                                                                                                               dev_agg_acc,
                                                                                                               dev_agg_KL))
             else:
-                wandb_logging_train(params,e,agg_acc, train_agg_KL, f1_macro, precision_macro, recall_macro)
+                wandb_logging_train(disco_model_params,e,agg_acc, train_agg_KL, f1_macro, precision_macro, recall_macro)
                 print(
                     " {0}: Fit.Acc = {1}  E.Acc = {2} L = {3}  KLi = {4}  KLa = {5}".format(e, acc, agg_acc, L, KLi,
                                                                                             KLa))
@@ -286,9 +300,9 @@ def train_disco(data, simulation_params, disco_model_params, params):
     ################################################################################
     save_object(model, "{0}/trained_model.disco".format(params["out_dir"]), config=_build_config(data, disco_model_params))
     if data["dev_Y"] is not None:
-        wandb_logging_dev(params,e,agg_acc, train_agg_KL, dev_agg_acc, dev_agg_KL, f1_macro, dev_f1_macro, precision_macro, dev_precision_macro, recall_macro, dev_recall_macro)
+        wandb_logging_dev(disco_model_params,e,agg_acc, train_agg_KL, dev_agg_acc, dev_agg_KL, f1_macro, dev_f1_macro, precision_macro, dev_precision_macro, recall_macro, dev_recall_macro)
     else:
-        wandb_logging_train(params,e,agg_acc, train_agg_KL, f1_macro, precision_macro, recall_macro)
+        wandb_logging_train(disco_model_params,e,agg_acc, train_agg_KL, f1_macro, precision_macro, recall_macro)
 
 def read_wandb_sweep_id(sweep_id, params, simulation_params, run_count):
     data = read_data(params)

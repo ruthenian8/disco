@@ -137,18 +137,20 @@ class DISCO(nn.Module):
 
     def _init_weights(self, init_type, stddev=0.05):
         seed = torch.initial_seed()
-        with torch.no_grad():
-            self.item_proj.weight.copy_(init_weights(init_type, [self.lat_i_dim, self.xi_dim], seed, stddev=stddev))
-            self.annotator_emb.weight.copy_(init_weights(init_type, [self.a_dim, self.lat_a_dim], seed, stddev=stddev))
-            self.fusion_proj.weight.copy_(
-                init_weights(init_type, [self.lat_dim, self.fusion_proj.in_features], seed, stddev=stddev)
-            )
-            self.encoder_proj.weight.copy_(
-                init_weights(init_type, [self.lat_dim, self.lat_dim], seed, stddev=stddev)
-            )
-            self.y_head.weight.copy_(init_weights(init_type, [self.y_dim, self.lat_dim], seed, stddev=stddev))
-            self.yi_head.weight.copy_(init_weights(init_type, [self.yi_dim, self.lat_dim], seed, stddev=stddev))
-            self.ya_head.weight.copy_(init_weights(init_type, [self.ya_dim, self.lat_dim], seed, stddev=stddev))
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(seed)
+            with torch.no_grad():
+                self.item_proj.weight.copy_(init_weights(init_type, [self.lat_i_dim, self.xi_dim], stddev=stddev))
+                self.annotator_emb.weight.copy_(init_weights(init_type, [self.a_dim, self.lat_a_dim], stddev=stddev))
+                self.fusion_proj.weight.copy_(
+                    init_weights(init_type, [self.lat_dim, self.fusion_proj.in_features], stddev=stddev)
+                )
+                self.encoder_proj.weight.copy_(
+                    init_weights(init_type, [self.lat_dim, self.lat_dim], stddev=stddev)
+                )
+                self.y_head.weight.copy_(init_weights(init_type, [self.y_dim, self.lat_dim], stddev=stddev))
+                self.yi_head.weight.copy_(init_weights(init_type, [self.yi_dim, self.lat_dim], stddev=stddev))
+                self.ya_head.weight.copy_(init_weights(init_type, [self.ya_dim, self.lat_dim], stddev=stddev))
 
     def encode_i(self, xi):
         """
@@ -202,17 +204,24 @@ class DISCO(nn.Module):
             Computes the label distribution given only an item feature vector
             (and model's knowledge of all known annotators).
         """
-        z_i = self.encode_i(xi)
-        annotator_ids = torch.arange(self.a_dim, device=xi.device)
-        z_a = self.annotator_emb(annotator_ids)
-        if self.lat_fusion_type == "concat":
-            tiled_z_i = z_i.expand(z_a.shape[0], -1)
-            z = self.fx(torch.cat([tiled_z_i, z_a], dim=1))
-        else:
-            z = self.fx(z_a + z_i)
-        z = self.transform(z)
-        y_logits = self.decode_y(z)
-        y_prob = torch.softmax(y_logits, dim=-1)
+        was_training = self.training
+        if was_training:
+            self.eval()
+        try:
+            z_i = self.encode_i(xi)
+            annotator_ids = torch.arange(self.a_dim, device=xi.device)
+            z_a = self.annotator_emb(annotator_ids)
+            if self.lat_fusion_type == "concat":
+                tiled_z_i = z_i.expand(z_a.shape[0], -1)
+                z = self.fx(torch.cat([tiled_z_i, z_a], dim=1))
+            else:
+                z = self.fx(z_a + z_i)
+            z = self.transform(z)
+            y_logits = self.decode_y(z)
+            y_prob = torch.softmax(y_logits, dim=-1)
+        finally:
+            if was_training:
+                self.train()
         return y_prob, y_logits
 
     def infer_a(self, xi, yi, K, beta, gamma=0.0, is_verbose=False):

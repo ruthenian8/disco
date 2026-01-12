@@ -1,3 +1,3 @@
-from .disco import DISCO
+from .disco import DISCO, DiscoConfig
 
-__all__ = ["DISCO"]
+__all__ = ["DISCO", "DiscoConfig"]

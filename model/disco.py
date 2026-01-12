@@ -1,8 +1,54 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from dataclasses import dataclass
 
-from ..utils import softmax, init_weights, calc_catNLL, D_KL, drop_out, l1_l2_norm_calculation
+from utils import init_weights
+
+
+@dataclass
+class DiscoConfig:
+    xi_dim: int
+    yi_dim: int
+    ya_dim: int
+    y_dim: int
+    a_dim: int
+    lat_i_dim: int = 20
+    lat_a_dim: int = 30
+    lat_dim: int = 10
+    act_fx: str = "softsign"
+    init_type: str = "gaussian"
+    name: str = "disco"
+    i_dim: int = -1
+    lat_fusion_type: str = "sum"
+    drop_p: float = 0.0
+    gamma_i: float = 1.0
+    gamma_a: float = 1.0
+    l1_norm: float = 0.0
+    l2_norm: float = 0.0
+
+    def to_dict(self):
+        return {
+            "xi_dim": self.xi_dim,
+            "yi_dim": self.yi_dim,
+            "ya_dim": self.ya_dim,
+            "y_dim": self.y_dim,
+            "a_dim": self.a_dim,
+            "lat_i_dim": self.lat_i_dim,
+            "lat_a_dim": self.lat_a_dim,
+            "lat_dim": self.lat_dim,
+            "act_fx": self.act_fx,
+            "init_type": self.init_type,
+            "name": self.name,
+            "i_dim": self.i_dim,
+            "lat_fusion_type": self.lat_fusion_type,
+            "drop_p": self.drop_p,
+            "gamma_i": self.gamma_i,
+            "gamma_a": self.gamma_a,
+            "l1_norm": self.l1_norm,
+            "l2_norm": self.l2_norm,
+        }
+
 
 class DISCO(nn.Module):
     """
@@ -10,16 +56,32 @@ class DISCO(nn.Module):
 
         @author DisCo Authors
     """
-    def __init__(self, xi_dim, yi_dim, ya_dim, y_dim, a_dim, lat_i_dim=20, lat_a_dim=30,
-                 lat_dim=10, act_fx="softsign", init_type="gaussian", name="disco",
-                 i_dim=-1, lat_fusion_type="sum", drop_p=0.0, gamma_i=1.0, gamma_a=1.0,
-                 l1_norm=0.0, l2_norm=0.0, device=None):
+
+    def __init__(
+        self,
+        xi_dim,
+        yi_dim,
+        ya_dim,
+        y_dim,
+        a_dim,
+        lat_i_dim=20,
+        lat_a_dim=30,
+        lat_dim=10,
+        act_fx="softsign",
+        init_type="gaussian",
+        name="disco",
+        i_dim=-1,
+        lat_fusion_type="sum",
+        drop_p=0.0,
+        gamma_i=1.0,
+        gamma_a=1.0,
+        l1_norm=0.0,
+        l2_norm=0.0,
+    ):
         super().__init__()
         self.name = name
-        self.seed = 69
-        self.device = torch.device(device) if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.gamma_i = gamma_i #1.0
-        self.gamma_a = gamma_a #1.0
+        self.gamma_i = gamma_i
+        self.gamma_a = gamma_a
         self.lat_fusion_type = lat_fusion_type
         self.i_dim = i_dim
         self.a_dim = a_dim
@@ -30,7 +92,7 @@ class DISCO(nn.Module):
         self.lat_dim = lat_dim
         self.lat_i_dim = lat_i_dim
         self.lat_a_dim = lat_a_dim
-        self.drop_p = drop_p #0.5
+        self.drop_p = drop_p
         self.l1_norm = l1_norm
         self.l2_norm = l2_norm
 
@@ -56,97 +118,55 @@ class DISCO(nn.Module):
             self.fx = lambda x: x
         else:
             print(" > Choosing base DisCo activation function - softsign(.)")
-            self.fx = F.softsign # hidden layer activation function
-        self.fx_y = softmax
-        self.fx_yi = softmax
-        self.fx_ya = softmax
-
-        stddev = 0.05 # 0.025
-        self.theta_y = nn.ParameterList()
-
-        self.Wi = nn.Parameter(init_weights(init_type, [self.xi_dim, self.lat_i_dim], self.seed, stddev=stddev))
-        self.theta_y.append(self.Wi)
-
-        self.Wa = nn.Parameter(init_weights(init_type, [self.a_dim, self.lat_a_dim], self.seed, stddev=stddev))
-        self.theta_y.append(self.Wa)
+            self.fx = F.softsign
 
         bot_dim = self.lat_i_dim
         if self.lat_fusion_type == "concat":
             bot_dim = self.lat_i_dim + self.lat_a_dim
 
-        self.Wp = nn.Parameter(init_weights(init_type, [bot_dim, self.lat_dim], self.seed, stddev=stddev))
-        self.theta_y.append(self.Wp)
+        self.item_proj = nn.Linear(self.xi_dim, self.lat_i_dim, bias=False)
+        self.annotator_emb = nn.Embedding(self.a_dim, self.lat_a_dim)
+        self.fusion_proj = nn.Linear(bot_dim, self.lat_dim, bias=False)
+        self.encoder_proj = nn.Linear(self.lat_dim, self.lat_dim, bias=False)
+        self.y_head = nn.Linear(self.lat_dim, self.y_dim, bias=False)
+        self.yi_head = nn.Linear(self.lat_dim, self.yi_dim, bias=False)
+        self.ya_head = nn.Linear(self.lat_dim, self.ya_dim, bias=False)
+        self.dropout = nn.Dropout(p=self.drop_p)
 
-        self.We = None
-        #if collapse_We is False:
-        self.We = nn.Parameter(init_weights(init_type, [self.lat_dim, self.lat_dim], self.seed, stddev=stddev))
-        self.theta_y.append(self.We)
+        self._init_weights(init_type)
 
-        self.Wy = nn.Parameter(init_weights(init_type, [self.lat_dim, self.y_dim], self.seed, stddev=stddev))
-        self.theta_y.append(self.Wy)
-
-        self.Wyi = nn.Parameter(init_weights(init_type, [self.lat_dim, self.yi_dim], self.seed, stddev=stddev))
-        self.theta_y.append(self.Wyi)
-
-        self.Wya = nn.Parameter(init_weights(init_type, [self.lat_dim, self.ya_dim], self.seed, stddev=stddev))
-        self.theta_y.append(self.Wya)
-
-        self.register_buffer("z_i", torch.zeros([1, self.lat_dim]))
-        self.register_buffer("z_a", torch.zeros([1, self.lat_dim]))
-
-        self.eta_v = 0.002
-        self.moment_v = 0.9
-        adam_eps = 1e-7 #1e-8  1e-6
-        self.y_opt = torch.optim.Adam(self.parameters(), lr=self.eta_v, betas=(0.9, 0.999), eps=adam_eps)
-        self.to(self.device)
-
-    def set_opt(self, opt_type, eta_v, moment_v=0.9):
-        adam_eps = 1e-7
-        self.eta_v = eta_v
-        self.moment_v = moment_v
-        if opt_type == "adam":
-            self.y_opt = torch.optim.Adam(self.parameters(), lr=self.eta_v, betas=(0.9, 0.999), eps=adam_eps)
-        elif opt_type == "rmsprop":
-            self.y_opt = torch.optim.RMSprop(self.parameters(), lr=self.eta_v, alpha=0.9, momentum=self.moment_v, eps=1e-6)
-        else:
-            self.y_opt = torch.optim.SGD(self.parameters(), lr=self.eta_v)
-
-    def calc_loss(self, y, yi, ya, y_prob, yi_prob, ya_prob):
-        Ly = calc_catNLL(target=y,prob=y_prob,keep_batch=True) #Ly = D_KL(y_prob, y)
-        Ly = torch.mean(Ly) #Ly = torch.sum(Ly)
-        Lyi = D_KL(yi, yi_prob) * self.gamma_i
-        Lya = D_KL(ya, ya_prob) * self.gamma_a
-        l1 = 0.0
-        l2 = 0.0
-        #NS = # of rows in the mini batch (rows in Y)
-        mini_bath_size = y.shape[0] * 1.0
-        if self.l1_norm > 0:
-            l1 = l1_l2_norm_calculation(self.theta_y,1,mini_bath_size) * self.l1_norm 
-        if self.l2_norm > 0:
-            l2 = l1_l2_norm_calculation(self.theta_y,2,mini_bath_size) * self.l2_norm 
-        L_t = Ly + Lyi + Lya + l1 + l2
-        return L_t, Ly, Lyi, Lya
+    def _init_weights(self, init_type, stddev=0.05):
+        seed = torch.initial_seed()
+        with torch.no_grad():
+            self.item_proj.weight.copy_(init_weights(init_type, [self.lat_i_dim, self.xi_dim], seed, stddev=stddev))
+            self.annotator_emb.weight.copy_(init_weights(init_type, [self.a_dim, self.lat_a_dim], seed, stddev=stddev))
+            self.fusion_proj.weight.copy_(
+                init_weights(init_type, [self.lat_dim, self.fusion_proj.in_features], seed, stddev=stddev)
+            )
+            self.encoder_proj.weight.copy_(
+                init_weights(init_type, [self.lat_dim, self.lat_dim], seed, stddev=stddev)
+            )
+            self.y_head.weight.copy_(init_weights(init_type, [self.y_dim, self.lat_dim], seed, stddev=stddev))
+            self.yi_head.weight.copy_(init_weights(init_type, [self.yi_dim, self.lat_dim], seed, stddev=stddev))
+            self.ya_head.weight.copy_(init_weights(init_type, [self.ya_dim, self.lat_dim], seed, stddev=stddev))
 
     def encode_i(self, xi):
         """
             Calculates projection/embedding of item feature vector x_i
         """
-        z_enc = torch.matmul(xi, self.Wi)
-        return z_enc
+        return self.item_proj(xi)
 
     def encode_a(self, a):
         """
             Calculates projection/embedding of annotator a
         """
-        av = torch.as_tensor(a, dtype=torch.long, device=self.device)
-        av = av.squeeze()
-        z_enc = self.Wa[av]
+        av = a.long().view(-1)
+        z_enc = self.annotator_emb(av)
         if len(z_enc.shape) < 2:
             z_enc = z_enc.unsqueeze(0)
         return z_enc
 
     def encode(self, xi, a):
-        z = None
         if self.lat_fusion_type == "concat":
             z = self.fx(torch.cat([self.encode_i(xi), self.encode_a(a)], dim=1))
         else:
@@ -154,85 +174,45 @@ class DISCO(nn.Module):
         z = self.transform(z)
         return z
 
-    def transform(self,z):
-        z_p = self.fx(torch.matmul(z, self.Wp))
-        if self.drop_p > 0.0:
-            z_p, _ = drop_out(z_p, rate=self.drop_p)
-        z_e = self.fx(torch.matmul(z_p, self.We) + z_p)
-        if self.drop_p > 0.0:
-            z_e, _ = drop_out(z_e, rate=self.drop_p)
+    def transform(self, z):
+        z_p = self.fx(self.fusion_proj(z))
+        z_p = self.dropout(z_p)
+        z_e = self.fx(self.encoder_proj(z_p) + z_p)
+        z_e = self.dropout(z_e)
         return z_e
 
     def decode_yi(self, z):
-        y_logits = torch.matmul(z, self.Wyi)
-        y_dec = self.fx_yi(y_logits)
-        return y_dec, y_logits
+        return self.yi_head(z)
 
     def decode_ya(self, z):
-        y_logits = torch.matmul(z, self.Wya)
-        y_dec = self.fx_ya(y_logits)
-        return y_dec, y_logits
+        return self.ya_head(z)
 
     def decode_y(self, z):
-        y_logits = torch.matmul(z, self.Wy)
-        y_dec = self.fx_y(y_logits)
-        return y_dec, y_logits
+        return self.y_head(z)
 
-    def update(self, xi, a, yi, ya, y, update_radius=-1.):
-        """
-            Updates model parameters given data batch (i, a, yi, ya, y)
-        """
-        self.y_opt.zero_grad()
+    def forward(self, xi, a):
         z = self.encode(xi, a)
-        yi_prob, _ = self.decode_yi(z)
-        ya_prob, _ = self.decode_ya(z)
-        y_prob, _ = self.decode_y(z)
-
-        Ly = calc_catNLL(target=y, prob=y_prob, keep_batch=True)
-        Ly = torch.mean(Ly)
-
-        Lyi = D_KL(yi, yi_prob) * self.gamma_i
-        Lya = D_KL(ya, ya_prob) * self.gamma_a
-
-        l1 = 0.0
-        l2 = 0.0
-        mini_batch_size = y.shape[0] * 1.0
-        if self.l1_norm > 0:
-            l1 = l1_l2_norm_calculation(self.theta_y, 1, mini_batch_size) * self.l1_norm
-        if self.l2_norm > 0:
-            l2 = l1_l2_norm_calculation(self.theta_y, 2, mini_batch_size) * self.l2_norm
-        L_t = Ly + Lyi + Lya + l1 + l2
-
-        L_t.backward()
-        # apply optional gradient clipping
-        if update_radius > 0.0:
-            for param in self.theta_y:
-                if param.grad is not None:
-                    param.grad.data.clamp_(-update_radius, update_radius)
-        # update parameters given derivatives
-        self.y_opt.step()
-        return L_t.detach()
+        y_logits = self.decode_y(z)
+        yi_logits = self.decode_yi(z)
+        ya_logits = self.decode_ya(z)
+        return y_logits, yi_logits, ya_logits
 
     def decode_y_ensemble(self, xi):
         """
             Computes the label distribution given only an item feature vector
             (and model's knowledge of all known annotators).
         """
-        drop_p = self.drop_p + 0
-        self.drop_p = 0.0 # turn off dropout
-
         z_i = self.encode_i(xi)
-        z_a = self.Wa + 0 # gather all known annotators
-        z = None
+        annotator_ids = torch.arange(self.a_dim, device=xi.device)
+        z_a = self.annotator_emb(annotator_ids)
         if self.lat_fusion_type == "concat":
-            tiled_z_i = z_i.expand(z_a.shape[0], -1) # smear z_i across row dim of z_a (ensure same shapes)
+            tiled_z_i = z_i.expand(z_a.shape[0], -1)
             z = self.fx(torch.cat([tiled_z_i, z_a], dim=1))
         else:
             z = self.fx(z_a + z_i)
         z = self.transform(z)
-        y_prob, y_logits = self.decode_y(z)
-
-        self.drop_p = drop_p # turn dropout back on
+        y_logits = self.decode_y(z)
+        y_prob = torch.softmax(y_logits, dim=-1)
         return y_prob, y_logits
 
     def infer_a(self, xi, yi, K, beta, gamma=0.0, is_verbose=False):
@@ -243,48 +223,30 @@ class DISCO(nn.Module):
         print("WARNING: DO NOT USE THIS! NOT DEBUGGED FOR CONCAT AT THE MOMENT!")
         best_L = None
         batch_size = yi.shape[0]
-        z_eps = 0.0 #0.001
+        z_eps = 0.0
         if "elu" in self.act_fx:
             z_eps = 0.001
-        # Step 1: encode xi
         z_i = self.encode_i(xi)
-        self.z_a = torch.zeros([batch_size, self.lat_dim], device=self.device) + z_eps
-        # Step 2: find za given xi, yi
+        z_a = torch.zeros([batch_size, self.lat_dim], device=xi.device) + z_eps
         for k in range(K):
-            self.z_a.requires_grad_()
-            z = self.fx(z_i + self.z_a)
+            z_a.requires_grad_()
+            z = self.fx(z_i + z_a)
             z = self.transform(z)
-            yi_prob, _ = self.decode_yi(z)
-            Lyi = D_KL(yi, yi_prob) * self.gamma_i
-            Lyi = torch.sum(Lyi)
+            yi_logits = self.decode_yi(z)
+            yi_log_prob = F.log_softmax(yi_logits, dim=-1)
+            Lyi = F.kl_div(yi_log_prob, yi, reduction="batchmean") * self.gamma_i
             if is_verbose is True:
                 print("k({0}) KL(p(yi)||yi) = {1}".format(k, Lyi))
-            # check early halting criterion
             if best_L is not None:
                 if Lyi < best_L:
                     best_L = Lyi
                 else:
-                    break # early stop at this point
+                    break
             else:
                 best_L = Lyi
-            d_z_a = torch.autograd.grad(Lyi, self.z_a)[0] # get KL gradient w.r.t. z_a
-            self.z_a = (self.z_a - d_z_a * beta - self.z_a * gamma).detach() # update latent z_a
-        z_a = self.z_a
+            d_z_a = torch.autograd.grad(Lyi, z_a)[0]
+            z_a = (z_a - d_z_a * beta - z_a * gamma).detach()
         return z_a
 
     def clear(self):
-        self.z_i.zero_()
-        self.z_a.zero_()
-
-    def to(self, device):
-        # First, delegate device transfer of parameters/buffers to nn.Module
-        module = super().to(device)
-        # Then, update internal device reference
-        self.device = torch.device(device)
-        # Finally, move optimizer state tensors to the new device
-        if self.y_opt is not None:
-            for state in self.y_opt.state.values():
-                for key, value in state.items():
-                    if torch.is_tensor(value):
-                        state[key] = value.to(self.device)
-        return module
+        return

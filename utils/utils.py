@@ -5,14 +5,8 @@ Utilities function file
 """
 import torch
 import numpy as np
-import pickle
 from torch.utils.data import Dataset
 from .config import Config
-seed = 69
-torch.manual_seed(seed)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(seed)
-np.random.seed(seed)
 
 
 class DiscoDataset(Dataset):
@@ -44,16 +38,14 @@ class DiscoDataset(Dataset):
             "y": torch.as_tensor(self.y[idx], dtype=torch.float32),
         }
 
-def save_object(model, fname):
-    fd = open(fname, 'wb')
-    pickle.dump(model, fd)
-    fd.close()
+def save_object(model, fname, config=None):
+    checkpoint = {"model": model.state_dict()}
+    if config is not None:
+        checkpoint["config"] = config
+    torch.save(checkpoint, fname)
 
-def load_object(fname):
-    fd = open(fname, 'rb')
-    model = pickle.load( fd )
-    fd.close()
-    return model
+def load_object(fname, map_location="cpu"):
+    return torch.load(fname, map_location=map_location)
 
 def scale_feat(x, a=-1.0, b=1.0):
     x = torch.as_tensor(x, dtype=torch.float32)

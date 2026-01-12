@@ -45,7 +45,10 @@ def save_object(model, fname, config=None):
     torch.save(checkpoint, fname)
 
 def load_object(fname, map_location="cpu"):
-    return torch.load(fname, map_location=map_location)
+    try:
+        return torch.load(fname, map_location=map_location, weights_only=True)
+    except TypeError:
+        return torch.load(fname, map_location=map_location)
 
 def scale_feat(x, a=-1.0, b=1.0):
     x = torch.as_tensor(x, dtype=torch.float32)
@@ -190,7 +193,7 @@ def calc_gaussian_KL(mu1, sigSqr1, log_var1, mu2, sigSqr2, log_var2):
 def calc_gaussian_KL_simple(mu, log_sigma_sqr):
     return -0.5 * torch.sum(1 + log_sigma_sqr - (mu * mu) - torch.exp(log_sigma_sqr), dim=1)
 
-def init_weights(init_type, shape, seed, stddev=1.0):
+def init_weights(init_type, shape, stddev=1.0):
     if init_type == "he_uniform":
         params = torch.empty(shape)
         torch.nn.init.kaiming_uniform_(params, nonlinearity="relu")

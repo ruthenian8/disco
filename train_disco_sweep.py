@@ -81,7 +81,6 @@ def calc_stats(model, loss_fn, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="
     agg_KL = 0.0
     acc = 0.0
     agg_acc = 0.0  # aggregated accuracy
-    Ns = 0.0
     device = next(model.parameters()).device
     
     # Collect all predictions and ground truth labels
@@ -100,8 +99,6 @@ def calc_stats(model, loss_fn, Xi_, Yi_, Ya_, Y_, A_, I_, batch_size, agg_type="
 
             y_logits, yi_logits, ya_logits = model(xi_s, a_s)
             pY = torch.softmax(y_logits, dim=-1)
-            pYi = torch.softmax(yi_logits, dim=-1)
-            pYa = torch.softmax(ya_logits, dim=-1)
             Ns = y_s.shape[0]
             L_t, metrics = loss_fn(y_logits, yi_logits, ya_logits, y_s, yi_s, ya_s, model=model)
             L += L_t.item() * Ns
@@ -183,6 +180,10 @@ def _build_config(data, disco_model_params):
         "drop_p": disco_model_params["drop_p"],
         "gamma_i": disco_model_params["gamma_i"],
         "gamma_a": disco_model_params["gamma_a"],
+        "l1_norm": disco_model_params.get("l1_norm", 0.0),
+        "l2_norm": disco_model_params.get("l2_norm", 0.0),
+        "name": disco_model_params.get("name"),
+        "i_dim": disco_model_params.get("i_dim"),
     }
 
 

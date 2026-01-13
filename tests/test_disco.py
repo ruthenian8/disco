@@ -24,6 +24,30 @@ def _make_model(drop_p=0.0):
     )
 
 
+def _make_concat_model(drop_p=0.0):
+    return DISCO(
+        xi_dim=6,
+        yi_dim=4,
+        ya_dim=3,
+        y_dim=5,
+        a_dim=7,
+        lat_i_dim=4,
+        lat_a_dim=6,
+        lat_dim=5,
+        drop_p=drop_p,
+        lat_fusion_type="concat",
+    )
+
+
+def test_package_imports():
+    import importlib
+
+    disco = importlib.import_module("disco")
+    assert hasattr(disco, "DISCO")
+    assert hasattr(disco, "DiscoConfig")
+    assert hasattr(disco, "DiscoLoss")
+
+
 def test_forward_shapes_and_device():
     model = _make_model()
     xi = torch.randn(8, 6)
@@ -88,3 +112,40 @@ def test_loss_supports_distribution_targets():
 
     loss, _ = loss_fn(*model(xi, a), y_dist, yi, ya, model=model)
     assert torch.isfinite(loss)
+
+
+def test_encoder_components_shapes():
+    model = _make_model()
+    xi = torch.randn(3, 6)
+    a = torch.randint(0, 7, (3,))
+    z_i = model.encode_i(xi)
+    z_a = model.encode_a(a)
+    z = model.encode(xi, a)
+    assert z_i.shape == (3, 4)
+    assert z_a.shape == (3, 4)
+    assert z.shape == (3, 5)
+
+
+def test_concat_fusion_and_decoders():
+    model = _make_concat_model()
+    xi = torch.randn(2, 6)
+    a = torch.randint(0, 7, (2,))
+    z = model.encode(xi, a)
+    yi_logits = model.decode_yi(z)
+    ya_logits = model.decode_ya(z)
+    y_logits = model.decode_y(z)
+    assert z.shape == (2, 5)
+    assert yi_logits.shape == (2, 4)
+    assert ya_logits.shape == (2, 3)
+    assert y_logits.shape == (2, 5)
+
+
+def test_decode_y_ensemble_restores_training_mode():
+    model = _make_model(drop_p=0.1)
+    model.train()
+    xi = torch.randn(1, 6)
+    y_prob, y_logits = model.decode_y_ensemble(xi)
+    assert model.training is True
+    assert y_prob.shape == (7, 5)
+    assert y_logits.shape == (7, 5)
+    assert torch.allclose(y_prob.sum(dim=-1), torch.ones(7))

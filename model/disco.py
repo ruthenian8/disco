@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
 
-from ..utils import init_weights
+from utils import init_weights
 
 
 @dataclass
